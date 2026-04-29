@@ -8,7 +8,14 @@ class QdrantService:
     _encoder = None  # singleton model
 
     def __init__(self):
-        self.client = QdrantClient(host="localhost", port=6333)
+        import os
+        qdrant_url = os.getenv("QDRANT_URL")
+        
+        if qdrant_url:
+            self.client = QdrantClient(url=qdrant_url)
+        else:
+            print("QDRANT_URL not set. Falling back to in-memory mode for deployment.")
+            self.client = QdrantClient(":memory:")
 
         if QdrantService._encoder is None:
             QdrantService._encoder = SentenceTransformer("all-MiniLM-L6-v2")

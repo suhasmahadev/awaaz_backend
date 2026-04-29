@@ -15,3 +15,6 @@ PyPDF2
 google-generativeai
 httpx
 aiofiles
+qdrant-client
+sentence-transformers
+openai>=1.0.0
