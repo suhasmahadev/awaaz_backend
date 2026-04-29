@@ -65,12 +65,7 @@ def _rate_limit(ip: str, endpoint: str, max_calls: int, window_seconds: int) -> 
     return True
 
 
-ALLOWED_ORIGINS = [
-    "http://localhost:5173",
-    "http://localhost:5174",
-    "http://127.0.0.1:5173",
-    "http://127.0.0.1:5174",
-]
+ALLOWED_ORIGINS = ["*"]
 
 app = get_fast_api_app(
     agents_dir=AGENT_DIR,
