@@ -7,8 +7,13 @@ class PostgresDB:
 
     @classmethod
     async def connect(cls) -> None:
-        import os
-        from config import DATABASE_URL
+        DATABASE_URL = os.getenv("DATABASE_URL")
+
+        if not DATABASE_URL:
+            # Fallback for local dev if config.py or .env wasn't loaded
+            from dotenv import load_dotenv
+            load_dotenv()
+            DATABASE_URL = os.getenv("DATABASE_URL")
 
         if not DATABASE_URL:
             raise RuntimeError("DATABASE_URL is not set")
