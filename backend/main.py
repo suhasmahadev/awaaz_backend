@@ -39,13 +39,9 @@ from routers.ngo import admin_router as ngo_admin_router
 from routers.ngo import router as ngo_router
 from routers.complaint_pipeline import router as pipeline_router
 from routers import agent_chat
-from routers.admin_ops import router as admin_ops_router
-from routers.media_router import router as media_router
-from routers.community import router as community_router
 
 logger = logging.getLogger(__name__)
 AGENT_DIR = os.path.dirname(os.path.abspath(__file__))
-
 
 # ── Rate limiting ───────────────────────────────────────────────────────────────
 # ANTIGRAVITY: simple in-memory rate limiter — honest about not using Redis.
@@ -69,23 +65,27 @@ def _rate_limit(ip: str, endpoint: str, max_calls: int, window_seconds: int) -> 
     return True
 
 
+ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:5174",
+]
+
 app = get_fast_api_app(
     agents_dir=AGENT_DIR,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     web=True,
 )
 
+# ANTIGRAVITY: tightened from allow_origins=["*"] to known frontend origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # MVP ONLY
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-@app.get("/")
-def root():
-    return {"status": "live"}
 
 
 # ── Rate-limit middleware ───────────────────────────────────────────────────────
@@ -132,9 +132,6 @@ app.include_router(ngo_admin_router)
 app.include_router(ngo_router)
 app.include_router(pipeline_router, tags=["Pipeline"])
 app.include_router(agent_chat.router, prefix="/agent",     tags=["Agent Chat"])
-app.include_router(admin_ops_router, prefix="/admin", tags=["Admin Ops"])
-app.include_router(media_router)
-app.include_router(community_router)
 
 # ── Static files ────────────────────────────────────────────────────────────────
 STATIC_DIR = os.path.join(AGENT_DIR, "static")
@@ -144,10 +141,6 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 SERVICE_IMAGES_DIR = os.path.join(AGENT_DIR, "service_images")
 os.makedirs(SERVICE_IMAGES_DIR, exist_ok=True)
 app.mount("/service_images", StaticFiles(directory=SERVICE_IMAGES_DIR), name="service_images")
-
-UPLOADS_DIR = os.path.join(AGENT_DIR, "uploads")
-os.makedirs(UPLOADS_DIR, exist_ok=True)
-app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
 
 
 # ── Lifespan: DB connect + table bootstrap ─────────────────────────────────────
@@ -163,19 +156,6 @@ async def lifespan(app: FastAPI):
     app.state.pool = pool
     app.state.repo = Repo(pool)
     app.state.service = Service(app.state.repo)
-
-    if not os.getenv("NEAR_AI_KEY"):
-        import logging
-        logging.warning("NEAR_AI_KEY not set — pipeline AI will use fallback classification")
-
-    # ── MISSION 1: Seed admin user (upsert-safe) ───────────────────────────────
-    admin_exists = await pool.fetchval("SELECT id FROM users WHERE email=$1", "admin@gmail.com")
-    if not admin_exists:
-        from auth_security import hash_password
-        await pool.execute("""
-            INSERT INTO users (id, name, email, password_hash, role)
-            VALUES ($1,'Admin','admin@gmail.com',$2,'admin')
-        """, "usr_admin_001", hash_password("admin123"))
 
     async with pool.acquire() as conn:
         # ── Pre-flight migration: fix legacy role values before constraint is applied ──
@@ -304,7 +284,7 @@ async def lifespan(app: FastAPI):
             status              TEXT DEFAULT 'unverified'
                                 CHECK (status IN ('unverified','low_confidence',
                                                   'medium_confidence','high_confidence',
-                                                  'assigned','resolved','disputed')),
+                                                  'resolved','disputed')),
             confidence_score    FLOAT DEFAULT 0.0,
             confidence_signals  JSONB DEFAULT '{}',
             warranty_breach     BOOLEAN DEFAULT FALSE,
@@ -313,18 +293,6 @@ async def lifespan(app: FastAPI):
             created_at          TIMESTAMPTZ DEFAULT NOW(),
             updated_at          TIMESTAMPTZ DEFAULT NOW()
         );
-        """)
-
-        await conn.execute("""
-        ALTER TABLE complaints ADD COLUMN IF NOT EXISTS media_url TEXT;
-        """)
-
-        await conn.execute("""
-        ALTER TABLE complaints
-          ADD COLUMN IF NOT EXISTS report_count INTEGER DEFAULT 1,
-          ADD COLUMN IF NOT EXISTS reporters JSONB DEFAULT '[]'::jsonb,
-          ADD COLUMN IF NOT EXISTS cluster_id TEXT,
-          ADD COLUMN IF NOT EXISTS contractor JSONB;
         """)
 
         await conn.execute("""
@@ -445,66 +413,6 @@ async def lifespan(app: FastAPI):
           ADD COLUMN IF NOT EXISTS type TEXT DEFAULT 'access',
           ADD COLUMN IF NOT EXISTS message TEXT,
           ADD COLUMN IF NOT EXISTS region_match BOOLEAN;
-        """)
-
-        # ── MISSION 2: New tables ──────────────────────────────────────────────
-        await conn.execute("""
-        CREATE TABLE IF NOT EXISTS complaint_assignments (
-            id              TEXT PRIMARY KEY,
-            complaint_id    TEXT REFERENCES complaints(id),
-            contractor_id   TEXT,
-            contractor_name TEXT,
-            assigned_by     TEXT,
-            assigned_at     TIMESTAMPTZ DEFAULT NOW(),
-            due_date        DATE,
-            status          TEXT DEFAULT 'assigned'
-                            CHECK (status IN ('assigned','in_progress','resolved','rejected'))
-        );
-        """)
-
-        await conn.execute("""
-        CREATE TABLE IF NOT EXISTS ai_summaries (
-            id              TEXT PRIMARY KEY,
-            complaint_id    TEXT REFERENCES complaints(id) UNIQUE,
-            summary         TEXT,
-            risk_level      TEXT CHECK (risk_level IN ('critical','high','medium','low')),
-            risk_reason     TEXT,
-            recommended_action TEXT,
-            generated_at    TIMESTAMPTZ DEFAULT NOW()
-        );
-        """)
-
-        await conn.execute("""
-        ALTER TABLE ngo_requests ADD COLUMN IF NOT EXISTS org_type TEXT DEFAULT 'ngo';
-        """)
-
-        await conn.execute("""
-        ALTER TABLE ngo_requests ADD COLUMN IF NOT EXISTS admin_note_reject TEXT;
-        """)
-
-        await conn.execute("""
-        CREATE TABLE IF NOT EXISTS solve_requests (
-            request_id   TEXT PRIMARY KEY,
-            grievance_id TEXT REFERENCES complaints(id),
-            ngo_id       TEXT REFERENCES users(id),
-            note         TEXT,
-            status       TEXT DEFAULT 'PENDING'
-                         CHECK (status IN ('PENDING','APPROVED','REJECTED')),
-            created_at   TIMESTAMPTZ DEFAULT NOW(),
-            updated_at   TIMESTAMPTZ DEFAULT NOW(),
-            UNIQUE(grievance_id, ngo_id)
-        );
-        """)
-
-        # Migration: update complaints status constraint to include 'assigned'
-        await conn.execute("""
-        DO $$ BEGIN
-          ALTER TABLE complaints DROP CONSTRAINT IF EXISTS complaints_status_check;
-          ALTER TABLE complaints
-          ADD CONSTRAINT complaints_status_check
-          CHECK (status IN ('unverified','low_confidence','medium_confidence',
-                            'high_confidence','assigned','resolved','disputed'));
-        END $$;
         """)
 
     logger.info("AWAAZ-PROOF backend started. Tables bootstrapped.")

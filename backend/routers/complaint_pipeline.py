@@ -32,7 +32,6 @@ class ConfirmRequest(BaseModel):
     anon_id: str
     complaint_preview: dict
     language: str = "en"
-    media_url: str | None = None
 
 
 def sse(event: str, data: dict) -> str:
@@ -95,7 +94,7 @@ def _fallback_validation(message: str) -> dict[str, Any]:
 
 
 async def _classify_with_gemini(message: str) -> dict[str, Any]:
-    if not os.environ.get("NEAR_AI_KEY"):
+    if not os.environ.get("GOOGLE_API_KEY"):
         return _fallback_validation(message)
 
     validation_prompt = f"""
@@ -116,12 +115,13 @@ Return:
 """
 
     try:
-        from utils.near_ai import call as near_call
+        import google.generativeai as genai
 
-        validation = await asyncio.to_thread(near_call, validation_prompt)
-        if not validation:
-            return _fallback_validation(message)
-        return validation
+        genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
+        model = genai.GenerativeModel("gemini-2.5-flash")
+        resp = await asyncio.to_thread(model.generate_content, validation_prompt)
+        raw = (resp.text or "").strip().replace("```json", "").replace("```", "").strip()
+        return json.loads(raw)
     except Exception:
         return _fallback_validation(message)
 
@@ -345,7 +345,6 @@ async def analyze_complaint(req: PipelineRequest, request: Request):
         )
         await asyncio.sleep(0.1)
 
-        from utils.near_ai import get_attestation_info
         yield sse(
             "pipeline_done",
             {
@@ -354,7 +353,6 @@ async def analyze_complaint(req: PipelineRequest, request: Request):
                 "confidence": breakdown.confidence,
                 "confidence_tier": breakdown.threshold_tier,
                 "anon_id": req.anon_id,
-                "tee_attestation": get_attestation_info(),
             },
         )
 
@@ -386,7 +384,6 @@ async def confirm_complaint(req: ConfirmRequest, request: Request):
         lat=preview.get("lat", 12.9716),
         lng=preview.get("lng", 77.5946),
         description=description_en,
-        media_url=req.media_url or preview.get("media_url"),
     )
     agent_json = {"status": "success", "action": "complaint_created", "data": result}
     text_response = format_response(agent_json, user_language)

@@ -69,11 +69,6 @@ class Complaint(BaseModel):
     warranty_breach: bool = False
     breach_value_inr: int = 0
     vote_count: int = 0
-    media_url: Optional[str] = None
-    report_count: int = 1
-    reporters: list[str] = []
-    cluster_id: Optional[str] = None
-    contractor: Optional[dict] = None
 
 
 class Evidence(BaseModel):

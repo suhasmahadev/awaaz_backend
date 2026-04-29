@@ -4,17 +4,11 @@ from sentence_transformers import SentenceTransformer
 
 COLLECTION = "carpulse_logs"
 
-import os
-
 class QdrantService:
     _encoder = None  # singleton model
 
     def __init__(self):
-        qdrant_url = os.getenv("QDRANT_URL", ":memory:")
-        if qdrant_url == ":memory:":
-            self.client = QdrantClient(location=":memory:")
-        else:
-            self.client = QdrantClient(url=qdrant_url)
+        self.client = QdrantClient(host="localhost", port=6333)
 
         if QdrantService._encoder is None:
             QdrantService._encoder = SentenceTransformer("all-MiniLM-L6-v2")

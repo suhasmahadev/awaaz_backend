@@ -11,7 +11,6 @@ from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from routers.auth import get_current_user
-from utils.admin_sanitize import sanitize_for_admin
 from utils.hashing import verify_audit_signature
 
 logger = logging.getLogger(__name__)
@@ -68,7 +67,6 @@ async def complaints(
     """All complaints with optional status/city filters. Admin/moderator only."""
     try:
         items = await _repo(request).list_all_complaints(status=status, city=city)
-        items = sanitize_for_admin(items)
         return {"complaints": items, "count": len(items)}
     except Exception as exc:
         logger.error("admin/complaints failed: %s", exc, exc_info=True)
@@ -112,69 +110,10 @@ async def audit_log(
                 verify_audit_signature(payload, signature, _ENCLAVE_KEY)
                 if _ENCLAVE_KEY else False
             )
-        return {"audit_log": sanitize_for_admin(entries), "count": len(entries)}
+        return {"audit_log": entries, "count": len(entries)}
     except Exception as exc:
         logger.error("admin/audit-log failed: %s", exc, exc_info=True)
         raise HTTPException(status_code=500, detail=str(exc))
-
-
-@router.post("/approve-request/{request_id}")
-async def approve_solve_request(
-    request_id: str,
-    request: Request,
-    _: dict = Depends(_admin_only),
-):
-    try:
-        async with _repo(request).pool.acquire() as conn:
-            solve_req = await conn.fetchrow(
-                """
-                UPDATE solve_requests
-                SET status='APPROVED', updated_at=NOW()
-                WHERE request_id=$1
-                RETURNING *
-                """,
-                request_id,
-            )
-            if not solve_req:
-                raise HTTPException(status_code=404, detail="Solve request not found")
-
-            contractor = await conn.fetchrow(
-                """
-                SELECT ct.contractor_id, ctr.name, ctr.registration_no, ctr.city
-                FROM complaints c
-                LEFT JOIN contracts ct ON ct.id = c.contract_id
-                LEFT JOIN contractors ctr ON ctr.id = ct.contractor_id
-                WHERE c.id=$1
-                """,
-                solve_req["grievance_id"],
-            )
-            contractor = dict(contractor) if contractor else None
-            contractor_data = None
-            if contractor and contractor.get("contractor_id"):
-                contractor_data = {
-                    "name": contractor.get("name"),
-                    "contact": contractor.get("registration_no"),
-                    "company": contractor.get("name"),
-                    "contractor_id": contractor.get("contractor_id"),
-                    "city": contractor.get("city"),
-                }
-                await conn.execute(
-                    "UPDATE complaints SET contractor=$2::jsonb, updated_at=NOW() WHERE id=$1",
-                    solve_req["grievance_id"],
-                    json.dumps(contractor_data),
-                )
-
-        return {
-            "request_id": solve_req["request_id"],
-            "grievance_id": solve_req["grievance_id"],
-            "status": solve_req["status"],
-            "contractor": contractor_data,
-        }
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.error("approve_solve_request failed: %s", exc, exc_info=True)
-        raise HTTPException(status_code=500, detail="Approve request failed")
 
 
 # ── POST /admin/seed ───────────────────────────────────────────────────────────

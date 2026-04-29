@@ -36,17 +36,11 @@ class NewComplaintBody(BaseModel):
     lng: float
     description: Optional[str] = None
     language: Optional[str] = "en"
-    media_url: Optional[str] = None
 
 
 class VoteBody(BaseModel):
     anon_id: str
     vote_type: str  # corroborate | dispute
-
-
-class RequestSolveBody(BaseModel):
-    ngo_id: str
-    note: Optional[str] = None
 
 
 def _repo(request: Request):
@@ -63,15 +57,6 @@ def _request_language(request: Request, body_language: Optional[str] = None) -> 
         or request.headers.get("X-User-Language")
         or request.headers.get("Accept-Language")
     )
-
-
-def _public_complaint(row: dict) -> dict:
-    item = dict(row)
-    item.pop("anon_id", None)
-    item.pop("reporters", None)
-    item["contractor"] = None
-    item["report_count"] = item.get("report_count") or 1
-    return item
 
 
 async def _save_comment_image(file: UploadFile) -> tuple[str, str]:
@@ -152,7 +137,6 @@ async def new_complaint(body: NewComplaintBody, request: Request):
             lat=body.lat,
             lng=body.lng,
             description=description_en,
-            media_url=body.media_url,
         )
         return await _complaint_created_payload(result, user_language)
     except ValueError as exc:
@@ -177,35 +161,7 @@ async def area(
     from utils.geo import coords_to_geohash
     geohash_prefix = coords_to_geohash(lat, lng, 5)
     complaints = await _repo(request).list_complaints_by_area(geohash_prefix)
-    items = [_public_complaint(c) for c in complaints]
-    return {"status": "success", "complaints": items, "count": len(items)}
-
-
-@router.get("/community")
-async def community_feed(request: Request, lat: float = Query(12.9716), lng: float = Query(77.5946)):
-    from utils.geo import coords_to_geohash
-    geohash_prefix = coords_to_geohash(lat, lng, 5)
-    complaints = await _repo(request).list_complaints_by_area(geohash_prefix)
-    items = [
-        {
-            "grievance_id": c.get("id"),
-            "title": (c.get("complaint_type") or "complaint").replace("_", " ").title(),
-            "description": c.get("description") or "",
-            "category": c.get("complaint_type") or "other",
-            "urgency": c.get("status") or "unverified",
-            "geo": {"geohash": c.get("geohash")},
-            "lat": c.get("lat") or lat,
-            "lng": c.get("lng") or lng,
-            "media_url": c.get("media_url"),
-            "report_count": c.get("report_count") or 1,
-            "status": c.get("status"),
-            "created_at": c.get("created_at"),
-            "hash": c.get("id"),
-            "contractor": None,
-        }
-        for c in complaints
-    ]
-    return {"status": "success", "complaints": items, "count": len(items)}
+    return {"status": "success", "complaints": complaints, "count": len(complaints)}
 
 
 # ── GET /complaints/mine ───────────────────────────────────────────────────────
@@ -332,8 +288,6 @@ async def get_complaint_detail(complaint_id: str, request: Request):
     data = await _repo(request).get_complaint_with_evidence(complaint_id)
     if not data:
         raise HTTPException(status_code=404, detail="Complaint not found")
-    data["contractor"] = None
-    data.pop("anon_id", None)
     return data
 
 
@@ -344,62 +298,7 @@ async def get_complaint(complaint_id: str, request: Request):
     if not complaint:
         raise HTTPException(status_code=404, detail="Complaint not found")
     evidence = await _repo(request).get_evidence_by_complaint(complaint_id)
-    complaint = dict(complaint)
-    complaint["contractor"] = None
-    complaint.pop("anon_id", None)
     return {"status": "success", "complaint": complaint, "evidence": evidence}
-
-
-@router.post("/{complaint_id}/request-solve")
-async def request_solve(complaint_id: str, body: RequestSolveBody, request: Request):
-    try:
-        pool = request.app.state.pool
-        async with pool.acquire() as conn:
-            complaint = await conn.fetchrow("SELECT id FROM complaints WHERE id=$1", complaint_id)
-            if not complaint:
-                raise HTTPException(status_code=404, detail="Complaint not found")
-
-            org = await conn.fetchrow(
-                """
-                SELECT p.org_type, u.role
-                FROM users u
-                LEFT JOIN org_profiles p ON p.user_id = u.id
-                WHERE u.id=$1
-                """,
-                body.ngo_id,
-            )
-            org = dict(org) if org else None
-            if not org or (org.get("org_type") != "ngo" and org.get("role") not in ("ngo", "faculty")):
-                raise HTTPException(status_code=403, detail="Only NGO users can request to solve complaints")
-
-            request_id = f"solve_{uuid.uuid4().hex[:12]}"
-            row = await conn.fetchrow(
-                """
-                INSERT INTO solve_requests(request_id, grievance_id, ngo_id, note, status)
-                VALUES($1,$2,$3,$4,'PENDING')
-                ON CONFLICT(grievance_id, ngo_id) DO UPDATE
-                  SET note=COALESCE(EXCLUDED.note, solve_requests.note),
-                      updated_at=NOW()
-                RETURNING request_id, grievance_id, ngo_id, status, created_at
-                """,
-                request_id,
-                complaint_id,
-                body.ngo_id,
-                body.note,
-            )
-        created_at = row["created_at"]
-        return {
-            "request_id": row["request_id"],
-            "grievance_id": row["grievance_id"],
-            "ngo_id": row["ngo_id"],
-            "status": row["status"],
-            "created_at": created_at.isoformat() if created_at else None,
-        }
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.error("request_solve failed: %s", exc, exc_info=True)
-        raise HTTPException(status_code=500, detail="Request solve failed")
 
 
 # ── POST /complaints/{id}/vote ─────────────────────────────────────────────────

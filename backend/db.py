@@ -1,27 +1,18 @@
 """asyncpg connection pool singleton."""
+import os
 import asyncpg
-from config import DATABASE_URL
 
 class PostgresDB:
     pool: asyncpg.Pool = None
 
     @classmethod
     async def connect(cls) -> None:
-        import os
-        from dotenv import load_dotenv
-
-        load_dotenv()
-
-        DATABASE_URL = os.getenv("DATABASE_URL")
-
-        if not DATABASE_URL:
-            raise RuntimeError("DATABASE_URL is not set")
-
-        print("Using DATABASE_URL:", DATABASE_URL[:30], "...")
-
         cls.pool = await asyncpg.create_pool(
-            dsn=DATABASE_URL,
-            ssl="require",
+            user=os.environ["PG_USER"],
+            password=os.environ["PG_PASSWORD"],
+            database=os.environ["PG_DB"],
+            host=os.environ.get("PG_HOST", "localhost"),
+            port=int(os.environ.get("PG_PORT", 5432)),
             min_size=2,
             max_size=10,
         )

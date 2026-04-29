@@ -271,108 +271,19 @@ class Repo:
     # ── Complaints ─────────────────────────────────────────────────────────────
     async def insert_complaint(self, c) -> object:
         c.id = c.id or _id("cmp")
-        reporters = getattr(c, "reporters", None) or []
         async with self.pool.acquire() as conn:
             await conn.execute(
                 """INSERT INTO complaints(id,anon_id,asset_id,contract_id,complaint_type,
                    description,lat,lng,geohash,status,confidence_score,
-                   confidence_signals,warranty_breach,breach_value_inr,vote_count,media_url,
-                   report_count,reporters,cluster_id,contractor)
-                   VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14,$15,$16,
-                          $17,$18::jsonb,$19,$20::jsonb)""",
+                   confidence_signals,warranty_breach,breach_value_inr,vote_count)
+                   VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14,$15)""",
                 c.id, c.anon_id, c.asset_id, c.contract_id,
                 c.complaint_type, c.description, c.lat, c.lng,
                 c.geohash, c.status, c.confidence_score,
                 json.dumps(c.confidence_signals),
                 c.warranty_breach, c.breach_value_inr, c.vote_count,
-                getattr(c, "media_url", None),
-                getattr(c, "report_count", 1) or 1,
-                json.dumps(reporters),
-                getattr(c, "cluster_id", None),
-                json.dumps(getattr(c, "contractor", None)) if getattr(c, "contractor", None) else None,
             )
         return c
-
-    async def find_nearby_complaint(
-        self,
-        complaint_type: str,
-        lat: float,
-        lng: float,
-        threshold_m: float = 100.0,
-    ) -> Optional[dict]:
-        async with self.pool.acquire() as conn:
-            rows = await conn.fetch(
-                """
-                SELECT *
-                FROM complaints
-                WHERE complaint_type=$1
-                  AND lat IS NOT NULL
-                  AND lng IS NOT NULL
-                  AND status != 'resolved'
-                ORDER BY created_at DESC
-                LIMIT 250
-                """,
-                complaint_type,
-            )
-        from utils.geo import haversine_meters
-
-        best = None
-        best_distance = None
-        for row in rows:
-            item = dict(row)
-            distance = haversine_meters(lat, lng, float(item["lat"]), float(item["lng"]))
-            if distance <= threshold_m and (best_distance is None or distance < best_distance):
-                best = item
-                best_distance = distance
-        return best
-
-    async def aggregate_complaint_report(
-        self,
-        complaint_id: str,
-        reporter_hash: str,
-        media_url: str = None,
-    ) -> dict:
-        async with self.pool.acquire() as conn:
-            row = await conn.fetchrow(
-                """
-                SELECT reporters
-                FROM complaints
-                WHERE id=$1
-                FOR UPDATE
-                """,
-                complaint_id,
-            )
-            if not row:
-                raise ValueError("Complaint not found")
-
-            reporters = row["reporters"] or []
-            if isinstance(reporters, str):
-                try:
-                    reporters = json.loads(reporters)
-                except json.JSONDecodeError:
-                    reporters = []
-            already_reported = reporter_hash in reporters
-            if not already_reported:
-                reporters.append(reporter_hash)
-
-            updated = await conn.fetchrow(
-                """
-                UPDATE complaints
-                SET reporters=$2::jsonb,
-                    report_count=$3,
-                    media_url=COALESCE(media_url, $4),
-                    updated_at=NOW()
-                WHERE id=$1
-                RETURNING *
-                """,
-                complaint_id,
-                json.dumps(reporters),
-                len(reporters) if reporters else 1,
-                media_url,
-            )
-            data = dict(updated)
-            data["already_reported"] = already_reported
-            return data
 
     async def get_complaint(self, complaint_id: str) -> Optional[dict]:
         async with self.pool.acquire() as conn:

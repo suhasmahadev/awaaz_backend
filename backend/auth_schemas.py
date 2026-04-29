@@ -24,7 +24,6 @@ class Token(BaseModel):
     token_type: str = "bearer"
     role: str
     username: str
-    user_id: Optional[str] = None
     org_name: Optional[str] = None
     org_type: Optional[str] = None
     region: Optional[str] = None

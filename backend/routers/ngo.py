@@ -5,7 +5,6 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from auth_security import decode_token
-from utils.admin_sanitize import sanitize_for_admin
 
 router = APIRouter(prefix="/ngo", tags=["ngo"])
 admin_router = APIRouter(prefix="/admin", tags=["admin-ngo"])
@@ -44,7 +43,7 @@ def _current_user(request: Request, token_from_body: Optional[str] = None) -> di
 
 
 def _require_partner(user: dict) -> dict:
-    if user.get("role") not in ("moderator", "faculty", "ngo"):
+    if user.get("role") not in ("moderator", "faculty"):
         raise HTTPException(status_code=403, detail="NGO or contractor access required")
     return user
 
@@ -214,40 +213,6 @@ async def my_requests(request: Request):
             }
         requests.append(item)
     return {"requests": requests, "count": len(requests)}
-
-
-@router.get("/requests")
-async def solve_requests(request: Request):
-    try:
-        user = _current_user(request)
-        async with request.app.state.pool.acquire() as conn:
-            profile = await _org_profile(conn, user["sub"])
-            if user.get("role") not in ("ngo", "faculty") or (profile and profile.get("org_type") != "ngo"):
-                raise HTTPException(status_code=403, detail="NGO access required")
-
-            rows = await conn.fetch(
-                """
-                SELECT sr.request_id, sr.grievance_id, sr.ngo_id, sr.note, sr.status,
-                       sr.created_at, c.complaint_type, c.description, c.lat, c.lng,
-                       c.report_count, c.contractor
-                FROM solve_requests sr
-                JOIN complaints c ON c.id = sr.grievance_id
-                WHERE sr.ngo_id=$1
-                ORDER BY sr.created_at DESC
-                """,
-                user["sub"],
-            )
-        result = []
-        for row in rows:
-            item = dict(row)
-            if item.get("status") != "APPROVED":
-                item["contractor"] = None
-            result.append(sanitize_for_admin(item))
-        return result
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail="NGO request lookup failed") from exc
 
 
 @admin_router.get("/ngo-requests")

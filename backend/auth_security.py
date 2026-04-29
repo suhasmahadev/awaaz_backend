@@ -6,8 +6,7 @@ from typing import Optional
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 
-from config import SECRET_KEY
-
+SECRET_KEY = os.environ.get("SECRET_KEY", "insecure_fallback_change_me")
 ALGORITHM = os.environ.get("ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.environ.get("ACCESS_TOKEN_EXPIRE_MINUTES", 1440))
 

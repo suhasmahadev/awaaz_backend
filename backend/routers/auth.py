@@ -108,7 +108,6 @@ async def login(body: UserLogin, request: Request):
         access_token=token,
         role=user["role"],
         username=user["name"],
-        user_id=user["id"],
         org_name=profile_data.get("org_name"),
         org_type=profile_data.get("org_type"),
         region=profile_data.get("region"),

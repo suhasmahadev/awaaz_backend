@@ -4,12 +4,14 @@ python-dotenv
 requests
 google-adk
 python-multipart
+google-api-python-client
 asyncpg
 bcrypt==4.0.1
 passlib[bcrypt]==1.7.4
 python-jose[cryptography]
 pydantic[email]
+openpyxl
+PyPDF2
 google-generativeai
 httpx
 aiofiles
-

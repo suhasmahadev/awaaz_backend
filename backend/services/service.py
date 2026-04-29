@@ -14,7 +14,6 @@ Confidence chain links (verified end-to-end):
 import logging
 import os
 import uuid
-import hashlib
 from datetime import date, timedelta
 from typing import Optional
 
@@ -25,10 +24,6 @@ from utils.hashing import generate_audit_signature
 logger = logging.getLogger(__name__)
 
 _ENCLAVE_KEY: str = os.environ.get("ENCLAVE_KEY", "")
-
-
-def _reporter_hash(anon_id: str) -> str:
-    return hashlib.sha256((anon_id or "anonymous").encode("utf-8")).hexdigest()
 
 
 class Service:
@@ -78,7 +73,6 @@ class Service:
         lat: float,
         lng: float,
         description: Optional[str] = None,
-        media_url: Optional[str] = None,
     ) -> dict:
         """
         Creates a complaint, auto-links nearest asset, checks warranty breach.
@@ -90,48 +84,6 @@ class Service:
 
         geohash = coords_to_geohash(lat, lng, 7)
         geohash_candidates = find_nearest_asset_geohashes(lat, lng)
-        reporter_hash = _reporter_hash(anon_id)
-
-        existing = await self.repo.find_nearby_complaint(
-            complaint_type=complaint_type,
-            lat=lat,
-            lng=lng,
-            threshold_m=100.0,
-        )
-        if existing:
-            aggregated = await self.repo.aggregate_complaint_report(
-                complaint_id=existing["id"],
-                reporter_hash=reporter_hash,
-                media_url=media_url,
-            )
-            await self._log_action(
-                action="complaint_aggregated",
-                entity_type="complaint",
-                entity_id=aggregated["id"],
-                actor_id=anon_id,
-                payload={
-                    "complaint_type": complaint_type,
-                    "report_count": aggregated.get("report_count", 1),
-                    "already_reported": aggregated.get("already_reported", False),
-                },
-            )
-            return {
-                "complaint_id": aggregated["id"],
-                "grievance_id": aggregated["id"],
-                "aggregated": True,
-                "already_reported": aggregated.get("already_reported", False),
-                "report_count": aggregated.get("report_count", 1),
-                "geohash": aggregated.get("geohash"),
-                "asset_matched": aggregated.get("asset_id") is not None,
-                "contract_id": aggregated.get("contract_id"),
-                "warranty_breach": aggregated.get("warranty_breach", False),
-                "breach_value_inr": aggregated.get("breach_value_inr", 0),
-                "confidence": aggregated.get("confidence_score", 0.30),
-                "confidence_tier": aggregated.get("status", "unverified"),
-                "media_url": aggregated.get("media_url"),
-                "lat": aggregated.get("lat"),
-                "lng": aggregated.get("lng"),
-            }
 
         # Nearest asset → contract → warranty check
         asset = await self.repo.find_nearest_asset(geohash_candidates)
@@ -174,10 +126,6 @@ class Service:
             warranty_breach=warranty_breach,
             breach_value_inr=breach_value,
             vote_count=0,
-            media_url=media_url,
-            report_count=1,
-            reporters=[reporter_hash],
-            cluster_id=f"clu_{uuid.uuid4().hex[:12]}",
         )
         saved = await self.repo.insert_complaint(complaint)
 
@@ -192,7 +140,6 @@ class Service:
                 "lng":             lng,
                 "warranty_breach": warranty_breach,
                 "breach_value":    breach_value,
-                "media_url":        media_url,
             },
         )
 
@@ -205,10 +152,6 @@ class Service:
             "breach_value_inr": breach_value,
             "confidence":      0.30,
             "confidence_tier": "unverified",
-            "media_url":       media_url,
-            "report_count":     1,
-            "lat":             lat,
-            "lng":             lng,
         }
 
     # ── Confidence recalculation (Links 2–5) ────────────────────────────────────
@@ -405,7 +348,6 @@ class Service:
         lat: float,
         lng: float,
         description: Optional[str] = None,
-        media_url: Optional[str] = None,
     ) -> dict:
         """Alias used by ADK tools; guarantees anon reporter exists first."""
         await self.get_or_create_anon(anon_id)
@@ -415,7 +357,6 @@ class Service:
             lat=lat,
             lng=lng,
             description=description,
-            media_url=media_url,
         )
         result["complaint_type"] = complaint_type
         result["confidence_score"] = result.get("confidence", 0.0)

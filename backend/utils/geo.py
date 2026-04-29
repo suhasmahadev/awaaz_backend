@@ -5,7 +5,6 @@ Eliminates python-geohash/pygeohash C extension build issues on Windows.
 Algorithm: standard Gustavo Niemeyer geohash (Base32).
 """
 import logging
-import math
 from functools import lru_cache
 from typing import Optional
 
@@ -78,16 +77,6 @@ def coords_to_geohash(lat: float, lng: float, precision: int = 7) -> str:
     if not (1 <= precision <= 12):
         raise ValueError(f"Precision {precision} out of range [1, 12]")
     return _geohash_encode(lat, lng, precision)
-
-
-def haversine_meters(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
-    radius_m = 6371000.0
-    phi1 = math.radians(float(lat1))
-    phi2 = math.radians(float(lat2))
-    d_phi = math.radians(float(lat2) - float(lat1))
-    d_lam = math.radians(float(lng2) - float(lng1))
-    a = math.sin(d_phi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(d_lam / 2) ** 2
-    return radius_m * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
 def find_nearest_asset_geohashes(lat: float, lng: float) -> list[str]:
