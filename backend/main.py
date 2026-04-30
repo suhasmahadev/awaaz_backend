@@ -65,7 +65,18 @@ def _rate_limit(ip: str, endpoint: str, max_calls: int, window_seconds: int) -> 
     return True
 
 
-ALLOWED_ORIGINS = ["*"]
+ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "https://awaazfronntend.vercel.app",
+    "https://awaaz-frontend.vercel.app",
+]
+
+ALLOWED_REGEX = (
+    r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
+    r"|^https://awaaz[a-z0-9-]*\.vercel\.app$"
+)
 
 app = get_fast_api_app(
     agents_dir=AGENT_DIR,
@@ -73,14 +84,20 @@ app = get_fast_api_app(
     web=True,
 )
 
-# ANTIGRAVITY: tightened from allow_origins=["*"] to known frontend origins
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=ALLOWED_REGEX,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
+
+@app.get("/")
+@app.head("/")
+async def health_check():
+    return {"status": "ok", "message": "AWAAZ Backend is alive"}
 
 
 # ── Rate-limit middleware ───────────────────────────────────────────────────────
